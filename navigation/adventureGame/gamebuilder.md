@@ -304,8 +304,8 @@ select:disabled, option[disabled] { color: #fff; }
 
 .highlight-persistent-block {
     position: absolute;
-    background: color-mix(in srgb, var(--pref-accent-color) 12%, transparent);
-    border: 2px solid var(--pref-accent-color);
+    background: rgba(255, 230, 0, 0.6); /* Opaque yellow highlight for added code */
+    border: 2px solid #ffdd00;
     border-left-width: 4px;
     left: 10px;
     width: calc(100% - 20px);
@@ -597,8 +597,8 @@ iframe { width: 100%; height: 100%; border: none; }
                     </div>
                     <div class="draw-toolbar">
                         <button id="toggle-walls-game" class="draw-btn">Show Walls (Game)</button>
-                        <button id="draw-barrier" class="draw-btn">Draw Wall (Red)</button>
-                        <button id="draw-clear" class="draw-btn">Clear Shapes</button>
+                        <button id="draw-barrier" class="draw-btn">Draw Collision Wall</button>
+                        <button id="draw-clear" class="draw-btn">Clear All Walls</button>
                     </div>
                     <div id="walls-container"></div>
                 </div>
@@ -634,7 +634,9 @@ iframe { width: 100%; height: 100%; border: none; }
 </div>
 
 <script>
+/* builder bootstrapping and asset scanning */
 document.addEventListener('DOMContentLoaded', () => {
+    const SITE_BASE = "{{ site.baseurl }}" || "";
     const assets = {
         bg: {
             desert: { src: "/images/gamify/desert.png", h: 580, w: 1038 },
@@ -647,14 +649,13 @@ document.addEventListener('DOMContentLoaded', () => {
             r2d2: { src: "/images/gamify/r2_idle.png", h:223, w:505, rows:1, cols:3 }
         }
     };
-    // user uploads via file-based workflow
     const GB_BG_DIRS = ['/images/gamebuilder/bg'];
     const GB_SPR_DIRS = ['/images/gamebuilder/sprites'];
     const IMG_EXT_RE = /\.(png|jpg|jpeg|gif|webp|bmp)$/i;
 
     async function fetchJson(url) {
         try {
-            const res = await fetch(url, { cache: 'no-store' });
+            const res = await fetch((SITE_BASE ? (SITE_BASE + url) : url), { cache: 'no-store' });
             if (!res.ok) return null;
             const ct = res.headers.get('content-type') || '';
             if (ct.includes('application/json')) return await res.json();
@@ -664,7 +665,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
     async function fetchText(url) {
         try {
-            const res = await fetch(url, { cache: 'no-store' });
+            const res = await fetch((SITE_BASE ? (SITE_BASE + url) : url), { cache: 'no-store' });
             if (!res.ok) return null;
             const ct = res.headers.get('content-type') || '';
             if (ct.includes('text/html')) return await res.text();
@@ -672,6 +673,7 @@ document.addEventListener('DOMContentLoaded', () => {
         } catch (_) { return null; }
     }
 
+    // label normalization
     function sanitizeKey(name) {
         return String(name || '')
             .toLowerCase()
@@ -679,6 +681,7 @@ document.addEventListener('DOMContentLoaded', () => {
             .replace(/^_+|_+$/g, '');
     }
 
+    // select option management
     function clearSelectOptions(selectEl) {
         if (!selectEl) return;
         const opts = Array.from(selectEl.options || []);
@@ -689,6 +692,7 @@ document.addEventListener('DOMContentLoaded', () => {
         }
     }
 
+    // asset discovery: scan directory listing for image files
     async function scanDirForImages(dirUrl) {
         const html = await fetchText(dirUrl);
         const results = [];
@@ -697,18 +701,20 @@ document.addEventListener('DOMContentLoaded', () => {
         let m;
         while ((m = aRe.exec(html)) !== null) {
             const href = m[1];
-            const full = href.startsWith('http') ? href : (dirUrl.replace(/\/$/, '') + '/' + href.replace(/^\//, ''));
+            const fullRel = href.startsWith('http') ? href : (dirUrl.replace(/\/$/, '') + '/' + href.replace(/^\//, ''));
+            const full = SITE_BASE ? (SITE_BASE + fullRel) : fullRel;
             if (IMG_EXT_RE.test(full)) results.push(full);
         }
         return results;
     }
 
+    // asset metadata: ensure image dimensions by loading it
     async function ensureImageDims(src) {
         return new Promise((resolve) => {
             const img = new Image();
             img.onload = () => resolve({ h: img.naturalHeight, w: img.naturalWidth });
             img.onerror = () => resolve({ h: undefined, w: undefined });
-            img.src = src;
+            img.src = SITE_BASE ? (SITE_BASE + src) : src;
         });
     }
 
@@ -728,6 +734,7 @@ document.addEventListener('DOMContentLoaded', () => {
         }
     }
 
+    /* server asset scan → populate background/sprite selectors */
     async function scanServerAssets() {
         clearSelectOptions(ui.bg);
         clearSelectOptions(ui.pSprite);
@@ -741,7 +748,8 @@ document.addEventListener('DOMContentLoaded', () => {
                 for (const item of data) {
                     const name = item.name || item.key || item.src;
                     const key = sanitizeKey(name);
-                    const src = item.src?.startsWith('/') ? item.src : (dir.replace(/\/$/, '') + '/' + (item.src || ''));
+                    const srcRel = item.src?.startsWith('/') ? item.src : (dir.replace(/\/$/, '') + '/' + (item.src || ''));
+                    const src = srcRel; 
                     const dims = (item.h && item.w) ? { h: item.h, w: item.w } : await ensureImageDims(src);
                     if (!assets.bg[key]) assets.bg[key] = { src, h: dims.h, w: dims.w };
                     const opt = document.createElement('option'); opt.value = key; opt.textContent = name; ui.bg.appendChild(opt);
@@ -753,8 +761,9 @@ document.addEventListener('DOMContentLoaded', () => {
                     const name = base.replace(/\.[^.]+$/, '');
                     const key = sanitizeKey(name);
                     if (assets.bg[key]) continue;
-                    const dims = await ensureImageDims(src);
-                    assets.bg[key] = { src, h: dims.h, w: dims.w };
+                    const relSrc = src.replace(SITE_BASE, '');
+                    const dims = await ensureImageDims(relSrc);
+                    assets.bg[key] = { src: relSrc, h: dims.h, w: dims.w };
                     const opt = document.createElement('option'); opt.value = key; opt.textContent = name; ui.bg.appendChild(opt);
                 }
             }
@@ -770,7 +779,8 @@ document.addEventListener('DOMContentLoaded', () => {
                 for (const item of data) {
                     const name = item.name || item.key || item.src;
                     const key = sanitizeKey(name);
-                    const src = item.src?.startsWith('/') ? item.src : (dir.replace(/\/$/, '') + '/' + (item.src || ''));
+                    const srcRel = item.src?.startsWith('/') ? item.src : (dir.replace(/\/$/, '') + '/' + (item.src || ''));
+                    const src = srcRel; 
                     const dims = (item.h && item.w) ? { h: item.h, w: item.w } : await ensureImageDims(src);
                     const rows = item.rows || 4; const cols = item.cols || 3;
                     if (!assets.sprites[key]) assets.sprites[key] = { src, h: dims.h, w: dims.w, rows, cols };
@@ -786,9 +796,10 @@ document.addEventListener('DOMContentLoaded', () => {
                     const name = base.replace(/\.[^.]+$/, '');
                     const key = sanitizeKey(name);
                     if (assets.sprites[key]) continue;
-                    const dims = await ensureImageDims(src);
+                    const relSrc = src.replace(SITE_BASE, '');
+                    const dims = await ensureImageDims(relSrc);
                     const rows = 4, cols = 3; 
-                    assets.sprites[key] = { src, h: dims.h, w: dims.w, rows, cols };
+                    assets.sprites[key] = { src: relSrc, h: dims.h, w: dims.w, rows, cols };
                     const opt = document.createElement('option'); opt.value = key; opt.textContent = name; ui.pSprite.appendChild(opt);
                     document.querySelectorAll('.npc-sprite').forEach(sel => {
                         const o = document.createElement('option'); o.value = key; o.textContent = name; sel.appendChild(o);
@@ -801,6 +812,7 @@ document.addEventListener('DOMContentLoaded', () => {
         document.querySelectorAll('.npc-sprite').forEach(sel => dedupSelectOptions(sel));
     }
 
+    /*  UI element references and state containers */
     const ui = {
         bg: document.getElementById('bg-select'),
         bgInstructionsBtn: document.getElementById('bg-instructions-btn'),
@@ -855,11 +867,11 @@ document.addEventListener('DOMContentLoaded', () => {
         hLayer: document.getElementById('highlight-layer'),
         iframe: document.getElementById('game-iframe'),
         
-        //  controls
         colMain: document.querySelector('.col-main'),
         viewBtns: document.querySelectorAll('.view-btn')
     };
 
+    // view switching: preview/game/code panels
     ui.viewBtns.forEach(btn => {
         btn.addEventListener('click', () => {
             const view = btn.dataset.view;
@@ -871,16 +883,27 @@ document.addEventListener('DOMContentLoaded', () => {
 
     let envTopOffset = 0;
     let envLeftOffset = 0;
+    // live game container dimensions (from iframe)
+    let envWidth = 0;
+    let envHeight = 0;
+    // track overlay size to rescale drawn shapes on container changes
+    let overlayPrevW = 0;
+    let overlayPrevH = 0;
+    /* rceive live game container metrics (from iframe) */
     window.addEventListener('message', (e) => {
         try {
             if (e && e.data && e.data.type === 'rpg:env-metrics') {
                 envTopOffset = Number(e.data.top) || 0;
                 envLeftOffset = Number(e.data.left) || 0;
+                envWidth = Number(e.data.width) || envWidth || 0;
+                envHeight = Number(e.data.height) || envHeight || 0;
+                try { renderDrawShapes(); } catch (_) {}
                 try { syncOverlayBarriersToRunner(); } catch (_) {}
             }
         } catch (_) { /* ignore */ }
     });
 
+    // simple toggler for disclosure panels
     function toggle(el) {
         if (!el) return;
         const isHidden = el.style.display === 'none';
@@ -896,6 +919,7 @@ document.addEventListener('DOMContentLoaded', () => {
     if (ui.npcSpriteInstructionsBtn) ui.npcSpriteInstructionsBtn.addEventListener('click', () => toggle(ui.npcSpriteInstructionsPanel));
     if (ui.playerAdvancedBtn) ui.playerAdvancedBtn.addEventListener('click', () => toggle(ui.playerAdvancedPanel));
 
+    /* overlay drawing (barriers) */
     function removePreview() {
         if (!ui.drawOverlay) return;
         const preview = ui.drawOverlay.querySelector('.draw-rect.preview');
@@ -917,13 +941,30 @@ document.addEventListener('DOMContentLoaded', () => {
     if (ui.drawBarrierBtn) ui.drawBarrierBtn.addEventListener('click', () => { state.lastEdited = 'walls'; setDrawMode('barrier'); });
     if (ui.drawClearBtn) ui.drawClearBtn.addEventListener('click', () => { state.lastEdited = 'walls'; ui.drawShapes = []; ui.overlayConfirmed = false; renderDrawShapes(); syncFromControlsIfFreestyle(); });
 
+    // show/hide overlay per game walls visibility
     function updateOverlayVisibility() {
         if (!ui.drawOverlay) return;
         ui.drawOverlay.style.display = ui.gameWallsVisible ? '' : 'none';
     }
 
+    // render overlay rectangles and sync to game
     function renderDrawShapes() {
         if (!ui.drawOverlay) return;
+        const rect = ui.drawOverlay.getBoundingClientRect();
+        // auto-rescale shapes when overlay size changes (before confirmation)
+        if (!ui.overlayConfirmed && overlayPrevW && overlayPrevH && rect.width && rect.height && (rect.width !== overlayPrevW || rect.height !== overlayPrevH)) {
+            const scaleX = rect.width / overlayPrevW;
+            const scaleY = rect.height / overlayPrevH;
+            ui.drawShapes = ui.drawShapes.map(s => ({
+                ...s,
+                x: Math.round((s.x || 0) * scaleX),
+                y: Math.round((s.y || 0) * scaleY),
+                width: Math.round((s.width || 0) * scaleX),
+                height: Math.round((s.height || 0) * scaleY)
+            }));
+        }
+        overlayPrevW = rect.width || overlayPrevW;
+        overlayPrevH = rect.height || overlayPrevH;
         ui.drawOverlay.innerHTML = '';
         const frag = document.createDocumentFragment();
         ui.drawShapes.forEach(shape => {
@@ -1020,7 +1061,7 @@ document.addEventListener('DOMContentLoaded', () => {
         }
     });
 
-    // npcs
+    /* NPC UI slots and interactions */
     function makeNpcSlot(index) {
         const slot = {
             index,
@@ -1114,45 +1155,19 @@ document.addEventListener('DOMContentLoaded', () => {
             syncFromControlsIfFreestyle();
         });
 
+        // NPC deletion handler
+        // removes the slot, updates UI, rescans assets, and re-syncs code.
         slot.deleteBtn.addEventListener('click', () => {
             slot.container.remove();
             ui.npcs = ui.npcs.filter(n => n !== slot);
             updateStepUI();
             scanServerAssets();
-
-            // Inject CSS into iframe to hide HUD/scoreboard elements (non-breaking)
-            if (ui.iframe) {
-                ui.iframe.addEventListener('load', () => {
-                    try {
-                        const doc = ui.iframe.contentDocument;
-                        if (!doc) return;
-                        if (doc.getElementById('gb-hide-hud-style')) return;
-                        const style = doc.createElement('style');
-                        style.id = 'gb-hide-hud-style';
-                        style.textContent = `
-                            .pause-button-bar { display: none !important; }
-                            .leaderboard-widget { display: none !important; }
-                            .score-display { display: none !important; }
-                            .score-counter { display: none !important; }
-                            .stats-display { display: none !important; }
-                            #scoreDisplay { display: none !important; }
-                            #score { display: none !important; }
-                            .hud { display: none !important; }
-                            [id*="score" i] { display: none !important; }
-                            [class*="score" i] { display: none !important; }
-                        `;
-                        doc.head.appendChild(style);
-                    } catch (_) {
-                        // Cross-origin or missing doc; ignore
-                    }
-                });
-            }
             syncFromControlsIfFreestyle();
-            if (ui.freestyleMode) syncToCode();
         });
 
         ['input','change'].forEach(evt => {
-            const rerun = () => { try { syncFromControlsIfFreestyle(); } finally { runInEmbed(); } };
+            // Stage changes only; do not reload game until Confirm is pressed
+            const rerun = () => { try { syncFromControlsIfFreestyle(); } catch (_) {} };
             slot.nId?.addEventListener(evt, () => { rerun(); });
             slot.nMsg?.addEventListener(evt, () => { rerun(); });
             slot.nSprite?.addEventListener(evt, (e) => {
@@ -1189,6 +1204,7 @@ document.addEventListener('DOMContentLoaded', () => {
         });
     }
 
+    /* wall UI slots and interactions */
     function makeWallSlot(index) {
         const slot = {
             index,
@@ -1246,7 +1262,6 @@ document.addEventListener('DOMContentLoaded', () => {
             updateStepUI();
             scanServerAssets();
             syncFromControlsIfFreestyle();
-            if (ui.freestyleMode) syncToCode();
         });
 
         ['input','change'].forEach(evt => {
@@ -1274,6 +1289,7 @@ document.addEventListener('DOMContentLoaded', () => {
         });
     }
 
+    /* editor overlay + state */
     const LINE_HEIGHT = 20;
     const state = { persistent: null, typing: null, userEdited: false, programmaticEdit: false, lastEdited: null };
     let stagedCode = null;
@@ -1298,15 +1314,17 @@ document.addEventListener('DOMContentLoaded', () => {
 
     function setIndicator() {
         const current = steps[stepIndex];
+        const freestyleIndex = steps.indexOf('freestyle');
         if (stepIndicatorMini) {
-            if (stepIndex < 2) {
-                stepIndicatorMini.textContent = `Step ${stepIndex + 1}/2`;
+            if (stepIndex < freestyleIndex) {
+                stepIndicatorMini.textContent = `Step ${stepIndex + 1}/${freestyleIndex}`;
             } else {
                 stepIndicatorMini.textContent = 'Freestyle';
             }
         }
     }
 
+    // field lock/unlock helpers for step gating
     function lockField(el) { if (el) { el.disabled = true; el.classList.add('locked'); } }
     function unlockField(el) { if (el) { el.disabled = false; el.classList.remove('locked'); } }
 
@@ -1315,10 +1333,6 @@ document.addEventListener('DOMContentLoaded', () => {
         ui.editor.readOnly = false;
         const mv = document.getElementById('movement-keys');
         [ui.bg, ui.pSprite, ui.pX, ui.pY, ui.pName, mv].forEach(el => { if (el) el.disabled = true; });
-        ui.npcs.forEach(slot => {
-            if (slot.addBtn) slot.addBtn.disabled = true;
-            [slot.nId, slot.nMsg, slot.nSprite, slot.nX, slot.nY, slot.deleteBtn].forEach(el => { if (el) el.disabled = true; });
-        });
         if (ui.addWallBtn) ui.addWallBtn.disabled = true;
         ui.walls.forEach(slot => {
             const fields = [slot.wX, slot.wY, slot.wW, slot.wH, slot.deleteBtn];
@@ -1386,12 +1400,25 @@ document.addEventListener('DOMContentLoaded', () => {
             });
 
         }
+
+        // Always allow NPC edits, even after confirmation
+        ui.npcs.forEach(slot => {
+            if (slot.addBtn) slot.addBtn.disabled = false;
+            if (slot.fieldsContainer && slot.fieldsContainer.style.display !== 'none') {
+                [slot.nId, slot.nMsg, slot.nSprite, slot.nRows, slot.nCols, slot.nScale, slot.nAnim, slot.nX, slot.nY]
+                    .forEach(el => unlockField(el));
+                if (slot.deleteBtn) { slot.deleteBtn.disabled = false; slot.deleteBtn.style.display = ''; }
+            } else {
+                if (slot.deleteBtn) { slot.deleteBtn.disabled = !slot.locked; slot.deleteBtn.style.display = slot.locked ? '' : 'none'; }
+            }
+        });
     }
 
+        /* code generation (baseline and steps) */
         function generateBaselineCode() {
-                return `import GameEnvBackground from '/assets/js/BetterGameEngine/essentials/GameEnvBackground.js';
-import Player from '/assets/js/BetterGameEngine/gameObjects/Player.js';
-import Npc from '/assets/js/BetterGameEngine/gameObjects/Npc.js';
+            return `import GameEnvBackground from '/assets/js/GameEngine/essentials/GameEnvBackground.js';
+    import Player from '/assets/js/GameEngine/gameObjects/Player.js';
+    import Npc from '/assets/js/GameEngine/gameObjects/Npc.js';
     import Barrier from '/assets/js/adventureGame/Barrier.js';
 
 class CustomLevel {
@@ -1424,10 +1451,10 @@ export const gameLevelClasses = [CustomLevel];`;
                         : '{ up: 87, left: 65, down: 83, right: 68 }';
 
                 function header() {
-                        return `import GameEnvBackground from '/assets/js/BetterGameEngine/essentials/GameEnvBackground.js';
-import Player from '/assets/js/BetterGameEngine/gameObjects/Player.js';
-import Npc from '/assets/js/BetterGameEngine/gameObjects/Npc.js';
-import Barrier from '/assets/js/adventureGame/Barrier.js';
+                    return `import GameEnvBackground from '/assets/js/GameEngine/essentials/GameEnvBackground.js';
+        import Player from '/assets/js/GameEngine/gameObjects/Player.js';
+        import Npc from '/assets/js/GameEngine/gameObjects/Npc.js';
+        import Barrier from '/assets/js/adventureGame/Barrier.js';
 
 class CustomLevel {
     constructor(gameEnv) {
@@ -1441,6 +1468,17 @@ class CustomLevel {
         this.classes = [
             ${classesArray.join(',\n')}
         ];
+        /* BUILDER_ONLY_START */
+        // Post object summary to builder (debugging visibility of NPCs/walls)
+        try {
+            setTimeout(() => {
+                try {
+                    const objs = Array.isArray(gameEnv?.gameObjects) ? gameEnv.gameObjects : [];
+                    const summary = objs.map(o => ({ cls: o?.constructor?.name || 'Unknown', id: o?.canvas?.id || '', z: o?.canvas?.style?.zIndex || '' }));
+                    if (window && window.parent) window.parent.postMessage({ type: 'rpg:objects', summary }, '*');
+                } catch (_) {}
+            }, 250);
+        } catch (_) {}
         // Report environment metrics (like top offset) to builder
         try {
             if (window && window.parent) {
@@ -1497,6 +1535,7 @@ class CustomLevel {
                 }
             });
         } catch (_) {}
+        /* BUILDER_ONLY_END */
     }
 }
 
@@ -1523,7 +1562,7 @@ export const gameLevelClasses = [CustomLevel];`;
                             const y = parseInt(w.wY?.value || 100, 10);
                             const wWidth = parseInt(w.wW?.value || 150, 10);
                             const wHeight = parseInt(w.wH?.value || 20, 10);
-                            const visible = true; /* BUILDER_DEFAULT */
+                            const visible = true; 
                             const id = `wall_${idx+1}`;
                             barrierDefsB.push(`
         const barrierData${idx+1} = {
@@ -1533,11 +1572,18 @@ export const gameLevelClasses = [CustomLevel];`;
                             classes.push(`      { class: Barrier, data: barrierData${idx+1} }`);
                         });
                         const drawnBarriersB = ui.drawShapes.filter(s => s.type === 'barrier');
+                        const rectB = ui.drawOverlay?.getBoundingClientRect?.() || { width: 0, height: 0 };
+                        const scaleXB = (envWidth && rectB.width) ? (envWidth / rectB.width) : 1;
+                        const scaleYB = (envHeight && rectB.height) ? (envHeight / rectB.height) : 1;
                         drawnBarriersB.forEach((b, bIdx) => {
                             const id = `dbarrier_${bIdx+1}`;
+                            const bx = Math.max(0, Math.round((b.x || 0) * scaleXB));
+                            const by = Math.max(0, Math.round((b.y || 0) * scaleYB));
+                            const bw = Math.max(0, Math.round((b.width || 0) * scaleXB));
+                            const bh = Math.max(0, Math.round((b.height || 0) * scaleYB));
                             barrierDefsB.push(`
         const ${id} = {
-            id: '${id}', x: ${Math.max(0, Math.round(b.x - envLeftOffset))}, y: ${Math.max(0, Math.round(b.y - envTopOffset))}, width: ${Math.round(b.width)}, height: ${Math.round(b.height)}, visible: true /* BUILDER_DEFAULT */,
+            id: '${id}', x: ${bx}, y: ${by}, width: ${bw}, height: ${bh}, visible: true /* BUILDER_DEFAULT */,
             hitbox: { widthPercentage: 0.0, heightPercentage: 0.0 },
             fromOverlay: true
         };`);
@@ -1618,7 +1664,7 @@ export const gameLevelClasses = [CustomLevel];`;
                             const y = parseInt(w.wY?.value || 100, 10);
                             const wWidth = parseInt(w.wW?.value || 150, 10);
                             const wHeight = parseInt(w.wH?.value || 20, 10);
-                            const visible = true; /* BUILDER_DEFAULT */
+                            const visible = true; 
                             const id = `wall_${idx+1}`;
                             barrierDefs.push(`
         const barrierData${idx+1} = {
@@ -1629,11 +1675,18 @@ export const gameLevelClasses = [CustomLevel];`;
                         });
 
                         const drawnBarriersP = ui.drawShapes.filter(s => s.type === 'barrier');
+                        const rectP = ui.drawOverlay?.getBoundingClientRect?.() || { width: 0, height: 0 };
+                        const scaleXP = (envWidth && rectP.width) ? (envWidth / rectP.width) : 1;
+                        const scaleYP = (envHeight && rectP.height) ? (envHeight / rectP.height) : 1;
                         drawnBarriersP.forEach((b, bIdx) => {
                             const id = `dbarrier_${bIdx+1}`;
+                            const bx = Math.max(0, Math.round((b.x || 0) * scaleXP));
+                            const by = Math.max(0, Math.round((b.y || 0) * scaleYP));
+                            const bw = Math.max(0, Math.round((b.width || 0) * scaleXP));
+                            const bh = Math.max(0, Math.round((b.height || 0) * scaleYP));
                             barrierDefs.push(`
         const ${id} = {
-            id: '${id}', x: ${Math.max(0, Math.round(b.x - envLeftOffset))}, y: ${Math.max(0, Math.round(b.y - envTopOffset))}, width: ${Math.round(b.width)}, height: ${Math.round(b.height)}, visible: true /* BUILDER_DEFAULT */,
+            id: '${id}', x: ${bx}, y: ${by}, width: ${bw}, height: ${bh}, visible: true /* BUILDER_DEFAULT */,
             hitbox: { widthPercentage: 0.0, heightPercentage: 0.0 },
             fromOverlay: true
         };`);
@@ -1747,7 +1800,7 @@ export const gameLevelClasses = [CustomLevel];`;
                             const y = parseInt(w.wY?.value || 100, 10);
                             const wWidth = parseInt(w.wW?.value || 150, 10);
                             const wHeight = parseInt(w.wH?.value || 20, 10);
-                            const visible = true; /* BUILDER_DEFAULT */
+                            const visible = true; 
                             const id = `wall_${idx+1}`;
                             barrierDefsN.push(`
         const barrierData${idx+1} = {
@@ -1757,11 +1810,18 @@ export const gameLevelClasses = [CustomLevel];`;
                             classes.push(`      { class: Barrier, data: barrierData${idx+1} }`);
                         });
                         const drawnBarriersN = ui.drawShapes.filter(s => s.type === 'barrier');
+                        const rectN = ui.drawOverlay?.getBoundingClientRect?.() || { width: 0, height: 0 };
+                        const scaleXN = (envWidth && rectN.width) ? (envWidth / rectN.width) : 1;
+                        const scaleYN = (envHeight && rectN.height) ? (envHeight / rectN.height) : 1;
                         drawnBarriersN.forEach((b, bIdx) => {
                             const id = `dbarrier_${bIdx+1}`;
+                            const bx = Math.max(0, Math.round((b.x || 0) * scaleXN));
+                            const by = Math.max(0, Math.round((b.y || 0) * scaleYN));
+                            const bw = Math.max(0, Math.round((b.width || 0) * scaleXN));
+                            const bh = Math.max(0, Math.round((b.height || 0) * scaleYN));
                             barrierDefsN.push(`
         const ${id} = {
-            id: '${id}', x: ${Math.max(0, Math.round(b.x - envLeftOffset))}, y: ${Math.max(0, Math.round(b.y - envTopOffset))}, width: ${Math.round(b.width)}, height: ${Math.round(b.height)}, visible: true /* BUILDER_DEFAULT */,
+            id: '${id}', x: ${bx}, y: ${by}, width: ${bw}, height: ${bh}, visible: true /* BUILDER_DEFAULT */,
             hitbox: { widthPercentage: 0.0, heightPercentage: 0.0 },
             fromOverlay: true
         };`);
@@ -1864,7 +1924,7 @@ export const gameLevelClasses = [CustomLevel];`;
                         const y = parseInt(w.wY?.value || 100, 10);
                         const wWidth = parseInt(w.wW?.value || 150, 10);
                         const wHeight = parseInt(w.wH?.value || 20, 10);
-                        const visible = true; /* BUILDER_DEFAULT */ // visible in builder; collision active regardless
+                        const visible = true;
                         const id = `wall_${idx+1}`;
                         barrierDefs.push(`
         const barrierData${idx+1} = {
@@ -1875,11 +1935,18 @@ export const gameLevelClasses = [CustomLevel];`;
                     });
                     
                     const drawnBarriers = ui.drawShapes.filter(s => s.type === 'barrier');
+                    const rectW = ui.drawOverlay?.getBoundingClientRect?.() || { width: 0, height: 0 };
+                    const scaleXW = (envWidth && rectW.width) ? (envWidth / rectW.width) : 1;
+                    const scaleYW = (envHeight && rectW.height) ? (envHeight / rectW.height) : 1;
                     drawnBarriers.forEach((b, bIdx) => {
                         const id = `dbarrier_${bIdx+1}`;
+                        const bx = Math.max(0, Math.round((b.x || 0) * scaleXW));
+                        const by = Math.max(0, Math.round((b.y || 0) * scaleYW));
+                        const bw = Math.max(0, Math.round((b.width || 0) * scaleXW));
+                        const bh = Math.max(0, Math.round((b.height || 0) * scaleYW));
                         barrierDefs.push(`
         const ${id} = {
-            id: '${id}', x: ${Math.max(0, Math.round(b.x - envLeftOffset))}, y: ${Math.max(0, Math.round(b.y - envTopOffset))}, width: ${Math.round(b.width)}, height: ${Math.round(b.height)}, visible: true /* BUILDER_DEFAULT */,
+            id: '${id}', x: ${bx}, y: ${by}, width: ${bw}, height: ${bh}, visible: true /* BUILDER_DEFAULT */,
             hitbox: { widthPercentage: 0.0, heightPercentage: 0.0 },
             fromOverlay: true
         };`);
@@ -1893,6 +1960,7 @@ export const gameLevelClasses = [CustomLevel];`;
                 return ui.editor.value;
         }
 
+    /* SECTION: Diff computation for typed highlights */
     function computeChangeRange(oldCode, newCode) {
         const oldLines = oldCode.split('\n');
         const newLines = newCode.split('\n');
@@ -1907,6 +1975,7 @@ export const gameLevelClasses = [CustomLevel];`;
 
     function clearOverlay() { ui.hLayer.innerHTML = ''; }
 
+    // Render highlight overlay for typing and persistent blocks
     function renderOverlay() {
         clearOverlay();
         ui.hLayer.style.transform = `translateY(${-ui.editor.scrollTop}px)`;
@@ -1933,7 +2002,8 @@ export const gameLevelClasses = [CustomLevel];`;
 
     function syncFromControlsIfFreestyle() {
         const current = steps[stepIndex];
-        if (state.userEdited && current === 'freestyle') return;
+        // Allow control-driven updates in freestyle even after manual edits
+        if (state.userEdited && current === 'freestyle' && !state.lastEdited) return;
         const hasNPCs = ui.npcs.length > 0;
         const hasWalls = (ui.walls.length > 0) || (ui.drawShapes && ui.drawShapes.some(s => s.type === 'barrier'));
         const hasPlayer = !!ui.pSprite.value;
@@ -1944,29 +2014,88 @@ export const gameLevelClasses = [CustomLevel];`;
         } else {
             stepToCompose = hasWalls ? 'walls' : (hasNPCs ? 'npc' : (hasPlayer ? 'player' : (hasBackground ? 'background' : null)));
         }
-        const newCode = stepToCompose ? generateStepCode(stepToCompose) : generateBaselineCode();
-        if (newCode) {
-            stagedCode = newCode;
-            stagedStep = stepToCompose;
+        // Stage changes only; do not update editor or reload game until Confirm
+        const oldCode = ui.editor.value;
+        let composed = null;
+        let composedStep = stepToCompose;
+        if (stepToCompose === 'npc') {
+            const ins = buildNpcInsertText();
+            composed = mergeDefsAndClasses(oldCode, ins.defs, ins.classes);
+        } else if (stepToCompose === 'walls') {
+            const ins = buildBarrierInsertText();
+            composed = mergeDefsAndClasses(oldCode, ins.defs, ins.classes);
+        } else {
+            composed = stepToCompose ? generateStepCode(stepToCompose) : generateBaselineCode();
+        }
+        if (composed) {
+            stagedCode = composed;
+            stagedStep = composedStep;
             const btn = document.getElementById('btn-confirm');
             if (btn) btn.classList.add('staged');
-            const { startLine, lineCount } = computeChangeRange(ui.editor.value, newCode);
-            state.persistent = { startLine, lineCount: Math.max(1, lineCount) };
-            renderOverlay();
+            // Do not call simulateTypingChange here; wait for Confirm
         }
     }
 
-    function animateTypingDiff(oldCode, newCode, onDone) {
-        state.programmaticEdit = true;
+    /* SECTION: Typing animation (simulate code being typed, then persist highlight) */
+    function simulateTypingChange(oldCode, newCode, onDone) {
         const { startLine, lineCount } = computeChangeRange(oldCode, newCode);
-        ui.editor.value = newCode;
-        state.typing = null;
-        state.persistent = { startLine, lineCount: Math.max(1, lineCount) };
+        // If no visible change, just swap and persist
+        if (!lineCount || lineCount < 1) {
+            state.programmaticEdit = true;
+            ui.editor.value = newCode;
+            state.typing = null;
+            state.persistent = null;
+            renderOverlay();
+            state.programmaticEdit = false;
+            if (typeof onDone === 'function') onDone();
+            return;
+        }
+
+        const newLines = newCode.split('\n');
+        const before = newLines.slice(0, startLine).join('\n');
+        const changed = newLines.slice(startLine, startLine + lineCount).join('\n');
+        const after = newLines.slice(startLine + lineCount).join('\n');
+
+        const join3 = (a, b, c) => {
+            const s1 = a ? a + (b ? '\n' : (c ? '\n' : '')) : '';
+            const s2 = b ? b + (c ? '\n' : '') : '';
+            const s3 = c || '';
+            return s1 + s2 + s3;
+        };
+
+        const TICK_MS = 16;
+        const CHARS_PER_TICK = 50;
+        let idx = 0;
+
+        state.programmaticEdit = true;
+        state.typing = { startLine, lineCount: Math.max(1, lineCount) };
         renderOverlay();
-        state.programmaticEdit = false;
-        if (typeof onDone === 'function') onDone();
+
+        const typeStep = () => {
+            const nextIdx = Math.min(changed.length, idx + CHARS_PER_TICK);
+            const typedSegment = changed.slice(0, nextIdx);
+            ui.editor.value = join3(before, typedSegment, after);
+            renderOverlay();
+            idx = nextIdx;
+            if (idx < changed.length) {
+                window.setTimeout(typeStep, TICK_MS);
+            } else {
+                // Finished typing; set final value to ensure exact match
+                ui.editor.value = newCode;
+                state.typing = null;
+                state.persistent = { startLine, lineCount: Math.max(1, lineCount) };
+                renderOverlay();
+                state.programmaticEdit = false;
+                if (typeof onDone === 'function') onDone();
+            }
+        };
+
+        // Initialize the editor with the unchanged prefix and empty typed region
+        ui.editor.value = join3(before, '', after);
+        window.setTimeout(typeStep, TICK_MS);
     }
 
+    /* SECTION: NPC and Barrier code inserts for confirm merges */
     function buildNpcInsertText() {
         const includedSlots = ui.npcs.slice();
         if (!includedSlots.length) return { defs: '', classes: [] };
@@ -1981,7 +2110,7 @@ export const gameLevelClasses = [CustomLevel];`;
             const nY = (slot.nY && slot.nY.value) ? parseInt(slot.nY.value, 10) : 300;
             const nScale = Math.max(1, parseInt(slot.nScale?.value || 8, 10));
             const nAnim = Math.max(1, parseInt(slot.nAnim?.value || 50, 10));
-            return `\n        const npcData${index} = {\n            id: '${nId}',\n            greeting: '${nMsg}',\n            src: path + "${nSprite.src}",\n            SCALE_FACTOR: ${nScale},\n            ANIMATION_RATE: ${nAnim},\n            INIT_POSITION: { x: ${nX}, y: ${nY} },\n            pixels: { height: ${nSprite.h}, width: ${nSprite.w} },\n            orientation: { rows: ${nSprite.rows}, columns: ${nSprite.cols} },\n            down: { row: 0, start: 0, columns: 3 },\n            right: { row: Math.min(1, ${nSprite.rows} - 1), start: 0, columns: 3 },\n            left: { row: Math.min(2, ${nSprite.rows} - 1), start: 0, columns: 3 },\n            up: { row: Math.min(3, ${nSprite.rows} - 1), start: 0, columns: 3 },\n            upRight: { row: Math.min(3, ${nSprite.rows} - 1), start: 0, columns: 3 },\n            downRight: { row: Math.min(1, ${nSprite.rows} - 1), start: 0, columns: 3 },\n            upLeft: { row: Math.min(2, ${nSprite.rows} - 1), start: 0, columns: 3 },\n            downLeft: { row: 0, start: 0, columns: 3 },\n            hitbox: { widthPercentage: 0.1, heightPercentage: 0.2 },\n            dialogues: ['${nMsg}'],\n            reaction: function() { if (this.dialogueSystem) { this.showReactionDialogue(); } else { console.log(this.greeting); } },\n            interact: function() { if (this.dialogueSystem) { this.showRandomDialogue(); } }\n        };`;
+            return `\n        const npcData${index} = {\n            id: '${nId}',\n            greeting: '${nMsg}',\n            src: path + "${nSprite.src}",\n            SCALE_FACTOR: ${nScale},\n            ANIMATION_RATE: ${nAnim},\n            INIT_POSITION: { x: ${nX}, y: ${nY} },\n            pixels: { height: ${nSprite.h}, width: ${nSprite.w} },\n            orientation: { rows: ${nSprite.rows}, columns: ${nSprite.cols} },\n            down: { row: 0, start: 0, columns: 3 },\n            right: { row: Math.min(1, ${nSprite.rows} - 1), start: 0, columns: 3 },\n            left: { row: Math.min(2, ${nSprite.rows} - 1), start: 0, columns: 3 },\n            up: { row: Math.min(3, ${nSprite.rows} - 1), start: 0, columns: 3 },\n            upRight: { row: Math.min(3, ${nSprite.rows} - 1), start: 0, columns: 3 },\n            downRight: { row: Math.min(1, ${nSprite.rows} - 1), start: 0, columns: 3 },\n            upLeft: { row: Math.min(2, ${nSprite.rows} - 1), start: 0, columns: 3 },\n            downLeft: { row: 0, start: 0, columns: 3 },\n            hitbox: { widthPercentage: 0.1, heightPercentage: 0.2 },\n            zIndex: 12,\n            dialogues: ['${nMsg}'],\n            reaction: function() { if (this.dialogueSystem) { this.showReactionDialogue(); } else { console.log(this.greeting); } },\n            interact: function() { if (this.dialogueSystem) { this.showRandomDialogue(); } }\n        };`;
         }).join('\n');
         includedSlots.forEach((slot) => {
             classes.push(`      { class: Npc, data: npcData${slot.index} }`);
@@ -2004,6 +2133,7 @@ export const gameLevelClasses = [CustomLevel];`;
         return { defs, classes };
     }
 
+    /* SECTION: Code merge utilities (defs + classes into editor content) */
     function mergeDefsAndClasses(oldCode, insertDefs, insertClasses) {
         let code = oldCode;
         try {
@@ -2022,6 +2152,16 @@ export const gameLevelClasses = [CustomLevel];`;
             while ((mm = varRe.exec(scan)) !== null) { varNames.push(mm[1]); }
             if (varNames.length) {
                 varNames.forEach(vn => {
+                    const blockRe = new RegExp("\\n\\s*const\\s+" + vn + "\\s*=\\s*\\{[\\s\\S]*?\\};\\s*", 'g');
+                    code = code.replace(blockRe, '\n');
+                });
+            }
+            const barrierVarNames = [];
+            const bVarRe = /\bconst\s+(barrierData\d+)\s*=\s*\{/g;
+            let bm;
+            while ((bm = bVarRe.exec(scan)) !== null) { barrierVarNames.push(bm[1]); }
+            if (barrierVarNames.length) {
+                barrierVarNames.forEach(vn => {
                     const blockRe = new RegExp("\\n\\s*const\\s+" + vn + "\\s*=\\s*\\{[\\s\\S]*?\\};\\s*", 'g');
                     code = code.replace(blockRe, '\n');
                 });
@@ -2054,20 +2194,9 @@ export const gameLevelClasses = [CustomLevel];`;
     const mvEl = document.getElementById('movement-keys');
     const rerunPlayer = () => { syncFromControlsIfFreestyle(); };
     function updatePlayerPositionInEditor() {
+        // Stage player position changes; no live reload until Confirm
         state.lastEdited = 'player';
-        const code = ui.editor.value || '';
-        const x = parseInt(ui.pX?.value || '0', 10);
-        const y = parseInt(ui.pY?.value || '0', 10);
-        const re = /(INIT_POSITION:\s*\{\s*x:\s*)(\d+)(\s*,\s*y:\s*)(\d+)(\s*\})/;
-        const updated = code.replace(re, `$1${x}$3${y}$5`);
-        if (updated !== code) {
-            state.programmaticEdit = true;
-            ui.editor.value = updated;
-            state.programmaticEdit = false;
-            runInEmbed();
-        } else {
-            rerunPlayer();
-        }
+        rerunPlayer();
     }
     if (ui.bg) ui.bg.addEventListener('change', () => { state.lastEdited = 'background'; rerunPlayer(); });
     if (ui.pSprite) ui.pSprite.addEventListener('change', () => {
@@ -2125,16 +2254,64 @@ export const gameLevelClasses = [CustomLevel];`;
         if (slot.nY) slot.nY.addEventListener('input', () => { state.lastEdited = 'npc'; syncFromControlsIfFreestyle(); });
     });
 
+    /* SECTION: Confirm handler (apply staged code via typing, then lock fields) */
     document.getElementById('btn-confirm').addEventListener('click', () => {
         const btn = document.getElementById('btn-confirm');
         const oldCode = ui.editor.value;
         const current = steps[stepIndex];
 
+        try {
+            const npcInsAll = buildNpcInsertText();
+            const wallInsAll = buildBarrierInsertText();
+            const hasNpcAll = (npcInsAll.defs && npcInsAll.defs.trim().length) || (npcInsAll.classes && npcInsAll.classes.length);
+            const hasWallAll = (wallInsAll.defs && wallInsAll.defs.trim().length) || (wallInsAll.classes && wallInsAll.classes.length);
+            if (hasNpcAll || hasWallAll) {
+                const merged = mergeDefsAndClasses(oldCode, (npcInsAll.defs || '') + (wallInsAll.defs || ''), [...(npcInsAll.classes || []), ...(wallInsAll.classes || [])]);
+                simulateTypingChange(oldCode, merged, () => {
+                    ui.npcs.forEach(slot => {
+                        if (slot.fieldsContainer && slot.fieldsContainer.style.display !== 'none') {
+                            slot.locked = true;
+                            const name = (slot.nId && slot.nId.value ? slot.nId.value.trim() : 'NPC');
+                            slot.displayName = name;
+                            if (slot.addBtn) {
+                                const open = slot.fieldsContainer && slot.fieldsContainer.style.display !== 'none';
+                                slot.addBtn.textContent = name + (open ? ' ▾' : ' ▸');
+                                slot.addBtn.classList.add('btn-confirm');
+                            }
+                            if (slot.deleteBtn) { slot.deleteBtn.disabled = false; slot.deleteBtn.style.display = ''; }
+                        }
+                    });
+                    ui.walls.forEach(w => {
+                        if (w.fieldsContainer && w.fieldsContainer.style.display !== 'none') {
+                            w.locked = true;
+                            const name = w.displayName || `Wall ${w.index}`;
+                            w.displayName = name;
+                            if (w.addBtn) {
+                                const open = w.fieldsContainer && w.fieldsContainer.style.display !== 'none';
+                                w.addBtn.textContent = name + (open ? ' ▾' : ' ▸');
+                                w.addBtn.classList.add('btn-confirm');
+                            }
+                            if (w.deleteBtn) { w.deleteBtn.disabled = false; w.deleteBtn.style.display = ''; }
+                        }
+                    });
+                    stepIndex = steps.indexOf('freestyle');
+                    setIndicator();
+                    updateStepUI();
+                    ui.overlayConfirmed = ui.overlayConfirmed || hasWallAll;
+                    stagedCode = null; stagedStep = null;
+                    runInEmbed();
+                    if (btn) btn.classList.remove('staged');
+                });
+                return;
+            }
+        } catch (_) {}
+
         if (state.userEdited) {
-            if (current === 'npc') {
-                const ins = buildNpcInsertText();
-                const merged = mergeDefsAndClasses(oldCode, ins.defs, ins.classes);
-                animateTypingDiff(oldCode, merged, () => {
+            const npcIns = buildNpcInsertText();
+            const hasNpcIns = (npcIns.defs && npcIns.defs.trim().length) || (npcIns.classes && npcIns.classes.length);
+            if (hasNpcIns) {
+                const merged = mergeDefsAndClasses(oldCode, npcIns.defs, npcIns.classes);
+                simulateTypingChange(oldCode, merged, () => {
                     ui.npcs.forEach(slot => {
                         if (slot.fieldsContainer && slot.fieldsContainer.style.display !== 'none') {
                             slot.locked = true;
@@ -2151,6 +2328,7 @@ export const gameLevelClasses = [CustomLevel];`;
                             }
                         }
                     });
+                    // Stay in Freestyle after inserting NPCs
                     stepIndex = steps.indexOf('freestyle');
                     setIndicator();
                     updateStepUI();
@@ -2163,7 +2341,7 @@ export const gameLevelClasses = [CustomLevel];`;
             if (current === 'walls') {
                 const ins = buildBarrierInsertText();
                 const merged = mergeDefsAndClasses(oldCode, ins.defs, ins.classes);
-                animateTypingDiff(oldCode, merged, () => {
+                simulateTypingChange(oldCode, merged, () => {
                     ui.walls.forEach(w => {
                         if (w.fieldsContainer && w.fieldsContainer.style.display !== 'none') {
                             w.locked = true;
@@ -2196,7 +2374,7 @@ export const gameLevelClasses = [CustomLevel];`;
             if (applyingStep === 'npc') {
                 const ins = buildNpcInsertText();
                 const merged = mergeDefsAndClasses(oldCode, ins.defs, ins.classes);
-                animateTypingDiff(oldCode, merged, () => {
+                simulateTypingChange(oldCode, merged, () => {
                     ui.npcs.forEach(slot => {
                         if (slot.fieldsContainer && slot.fieldsContainer.style.display !== 'none') {
                             slot.locked = true;
@@ -2213,6 +2391,7 @@ export const gameLevelClasses = [CustomLevel];`;
                             }
                         }
                     });
+                    // Stay in Freestyle after confirming NPCs
                     stepIndex = steps.indexOf('freestyle');
                     stagedCode = null; stagedStep = null;
                     if (btn) btn.classList.remove('staged');
@@ -2225,7 +2404,7 @@ export const gameLevelClasses = [CustomLevel];`;
             if (applyingStep === 'walls') {
                 const ins = buildBarrierInsertText();
                 const merged = mergeDefsAndClasses(oldCode, ins.defs, ins.classes);
-                animateTypingDiff(oldCode, merged, () => {
+                simulateTypingChange(oldCode, merged, () => {
                     ui.walls.forEach(w => {
                         if (w.fieldsContainer && w.fieldsContainer.style.display !== 'none') {
                             w.locked = true;
@@ -2250,7 +2429,7 @@ export const gameLevelClasses = [CustomLevel];`;
                 return;
             }
             const codeToApply = stagedCode;
-            animateTypingDiff(oldCode, codeToApply, () => {
+            simulateTypingChange(oldCode, codeToApply, () => {
                 if (applyingStep === 'background') { lockField(ui.bg); }
                 if (applyingStep === 'player') { lockField(ui.pSprite); lockField(ui.pX); lockField(ui.pY); lockField(ui.pName); lockField(document.getElementById('movement-keys')); }
                 if (applyingStep === 'walls') {
@@ -2288,7 +2467,7 @@ export const gameLevelClasses = [CustomLevel];`;
             else alert('Add at least one NPC, then Confirm Step.');
             return;
         }
-        animateTypingDiff(oldCode, newCode, () => {
+        simulateTypingChange(oldCode, newCode, () => {
             if (current === 'background') { lockField(ui.bg); }
             if (current === 'player') { lockField(ui.pSprite); lockField(ui.pX); lockField(ui.pY); lockField(ui.pName); lockField(document.getElementById('movement-keys')); }
             if (current === 'npc') {
@@ -2309,6 +2488,7 @@ export const gameLevelClasses = [CustomLevel];`;
                     }
                 });
 
+                // Stay in Freestyle after confirming NPCs
                 stepIndex = steps.indexOf('freestyle');
             } else {
                 if (current === 'walls') {
@@ -2335,7 +2515,9 @@ export const gameLevelClasses = [CustomLevel];`;
         });
     });
 
+    /* SECTION: Runtime + iframe comms */
     function safeCodeToRun() {
+        // Prefer staged for background/player, but not for npc/walls so live engine uses editor merges
         const preferStaged = (typeof stagedStep !== 'undefined' && !['npc','walls'].includes(stagedStep));
         const preferred = (preferStaged && typeof stagedCode === 'string' && stagedCode.length) ? stagedCode : (ui.editor.value || '');
         const hasLevels = /export\s+const\s+gameLevelClasses/.test(preferred);
@@ -2345,14 +2527,17 @@ export const gameLevelClasses = [CustomLevel];`;
     function syncOverlayBarriersToRunner() {
         try {
             const shapes = Array.isArray(ui.drawShapes) ? ui.drawShapes : [];
+            const rect = ui.drawOverlay?.getBoundingClientRect?.() || { width: 0, height: 0 };
+            const scaleX = (envWidth && rect.width) ? (envWidth / rect.width) : 1;
+            const scaleY = (envHeight && rect.height) ? (envHeight / rect.height) : 1;
             const barriers = shapes
                 .filter(s => s && s.type === 'barrier')
                 .map((s, i) => ({
                     id: `dbarrier_rt_${i+1}`,
-                    x: Math.max(0, Math.round((s.x || 0) - (envLeftOffset || 0))),
-                    y: Math.max(0, Math.round((s.y || 0) - (envTopOffset || 0))),
-                    width: Math.max(0, Math.round(s.width || 0)),
-                    height: Math.max(0, Math.round(s.height || 0)),
+                    x: Math.max(0, Math.round(((s.x || 0)) * scaleX)),
+                    y: Math.max(0, Math.round(((s.y || 0)) * scaleY)),
+                    width: Math.max(0, Math.round((s.width || 0) * scaleX)),
+                    height: Math.max(0, Math.round((s.height || 0) * scaleY)),
                     visible: !!ui.gameWallsVisible
                 }));
             ui.iframe?.contentWindow?.postMessage({ type: 'rpg:set-drawn-barriers', barriers }, '*');
@@ -2362,17 +2547,21 @@ export const gameLevelClasses = [CustomLevel];`;
     function runInEmbed() {
         renderOverlay();
         const code = safeCodeToRun();
-        ui.iframe.src = ui.iframe.src;
+        const currentSrc = ui.iframe.src;
         ui.iframe.onload = () => {
             setTimeout(() => {
-                ui.iframe.contentWindow.postMessage({ type: 'rpg:run-code', code: code }, '*');
+                try {
+                    ui.iframe.contentWindow.postMessage({ type: 'rpg:run-code', code: code }, '*');
+                } catch (_) {}
             }, 100);
         };
-        
-        // Force iframe reload by changing src to self with cache bust
-        const urlObj = new URL(currentSrc, window.location.origin);
-        urlObj.searchParams.set('t', Date.now());
-        ui.iframe.src = urlObj.toString();
+        try {
+            const urlObj = new URL(currentSrc, window.location.origin);
+            urlObj.searchParams.set('t', Date.now());
+            ui.iframe.src = urlObj.toString();
+        } catch (_) {
+            ui.iframe.src = currentSrc;
+        }
     }
 
     document.getElementById('btn-run').addEventListener('click', runInEmbed);
@@ -2391,13 +2580,18 @@ export const gameLevelClasses = [CustomLevel];`;
         });
     }
 
-    // Export current level code as a download-ready JS file
+    /* export composed level code */
     function exportCode() {
         let code = stagedCode || safeCodeToRun();
         if (!/export\s+const\s+gameLevelClasses/.test(code)) {
             code = generateBaselineCode();
         }
         code = code.replace(/visible:\s*true\s*\/\*\s*BUILDER_DEFAULT\s*\*\//g, 'visible: false');
+        // remove any builder-only diagnostics and comms blocks
+        code = code.replace(/\/\*\s*BUILDER_ONLY_START\s*\*\/[\s\S]*?\/\*\s*BUILDER_ONLY_END\s*\*\//g, '');
+        // fallback cleanup if markers are missing in the current editor content
+        code = code.replace(/^.*window\.parent\.postMessage\([^\n]*\)\s*;?\s*$/gm, '');
+        code = code.replace(/try\s*\{\s*window\.addEventListener\(\s*'message'[\s\S]*?\}\s*catch\s*\(_\)\s*\{\}\s*/g, '');
         code = code.replace(/\/\* BUILDER_HOOKS_START \*\/[\s\S]*?\/\* BUILDER_HOOKS_END \*\//g, '');
         code = code.replace(/import\s+GameControl\s+from\s+[^\n]+\n/g, '');
         code = code.replace(/export\s*\{\s*GameControl\s*\};?/g, '');
@@ -2425,8 +2619,9 @@ export const gameLevelClasses = [CustomLevel];`;
     const refreshBtn = document.getElementById('btn-refresh-assets');
     if (refreshBtn) refreshBtn.addEventListener('click', () => { scanServerAssets(); });
 
+    try { scanServerAssets(); } catch (_) {}
 
-    // Initialize editor and UI on load
+
     ui.editor.value = generateBaselineCode();
     setIndicator();
     updateStepUI();
@@ -2486,3 +2681,5 @@ window.addEventListener('keyup', function(e) {
     forwardInteractKey(e, 'keyup');
 });
 </script>
+
+
