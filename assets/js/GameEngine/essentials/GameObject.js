@@ -87,6 +87,8 @@ class GameObject {
         // Reset collision events if no collisions detected
         if (!collisionDetected) {
             this.state.collisionEvents = [];
+            // Restore full movement when not colliding (prevents lingering blocks)
+            this.state.movement = { up: true, down: true, left: true, right: true };
         }
     }
 
@@ -145,7 +147,7 @@ class GameObject {
             },
         };
 
-        this.collisionData = { hit, touchPoints };
+        this.collisionData = { hit, touchPoints, rects: { thisRect, otherRect } };
     }
 
     /**
@@ -199,6 +201,7 @@ class GameObject {
         // handle player reaction based on collision type
         if (this.state.collisionEvents.length > 0) {
             const touchPoints = this.collisionData.touchPoints.this;
+            // Movement restrictions are set here; position correction handled by Player
 
             // Reset movement to allow all directions initially
             this.state.movement = { up: true, down: true, left: true, right: true };

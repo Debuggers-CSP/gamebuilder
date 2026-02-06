@@ -77,16 +77,26 @@ class Player extends Character {
 
     updateVelocity() {
         this.moved = false;
+        const mv = (this.state && this.state.movement) ? this.state.movement : { up: true, down: true, left: true, right: true };
 
         if (this.pressedKeys[this.keypress.right] || this.pressedKeys[this.keypress.left]) {
             this.moved = true;
 
             if (this.pressedKeys[this.keypress.right]) {
-                this.transform.xv += 1.2 * this.time;
+                if (mv.right) {
+                    this.transform.xv += 1.2 * this.time;
+                } else {
+                    // Block pushing into collision from the right
+                    this.transform.xv = Math.min(0, this.transform.xv);
+                }
             }
-
             else if (this.pressedKeys[this.keypress.left]) {
-                this.transform.xv -= 1.2 * this.time;
+                if (mv.left) {
+                    this.transform.xv -= 1.2 * this.time;
+                } else {
+                    // Block pushing into collision from the left
+                    this.transform.xv = Math.max(0, this.transform.xv);
+                }
             }
         }
 
@@ -94,11 +104,20 @@ class Player extends Character {
             this.moved = true;
 
             if (this.pressedKeys[this.keypress.up]) {
-                this.transform.yv -= 1.2 * this.time;
+                if (mv.up) {
+                    this.transform.yv -= 1.2 * this.time;
+                } else {
+                    // Block pushing into collision from above
+                    this.transform.yv = Math.max(0, this.transform.yv);
+                }
             }
-
             else if (this.pressedKeys[this.keypress.down]) {
-                this.transform.yv += 0.6 * this.time;
+                if (mv.down) {
+                    this.transform.yv += 0.6 * this.time;
+                } else {
+                    // Block pushing into collision from below
+                    this.transform.yv = Math.min(0, this.transform.yv);
+                }
             }
         }
 
@@ -132,6 +151,9 @@ class Player extends Character {
 
     update() {
         this.updateVelocity();
+        // Save previous position before applying velocity
+        const prevX = this.transform.x;
+        const prevY = this.transform.y;
         
         // Apply gravity before position update (which super.update will handle)
         if(!this.moved){
@@ -172,6 +194,23 @@ class Player extends Character {
         
         // Call super.update() to handle collision checks and rendering
         super.update();
+
+        // If collision detected, revert only the axis pushing into the collision (no teleport sticking)
+        if (this.state && Array.isArray(this.state.collisionEvents) && this.state.collisionEvents.length > 0) {
+            const mv = (this.state && this.state.movement) ? this.state.movement : { up: true, down: true, left: true, right: true };
+            const dx = this.transform.x - prevX;
+            const dy = this.transform.y - prevY;
+            // Horizontal correction: if pushing into blocked side, revert X
+            if ((!mv.right && dx > 0) || (!mv.left && dx < 0)) {
+                this.transform.x = prevX;
+                this.transform.xv = 0;
+            }
+            // Vertical correction: if pushing into blocked side, revert Y
+            if ((!mv.down && dy > 0) || (!mv.up && dy < 0)) {
+                this.transform.y = prevY;
+                this.transform.yv = 0;
+            }
+        }
     }
         
     /**
@@ -182,9 +221,9 @@ class Player extends Character {
      * @param {*} other - The object that the player is colliding with
      */
     handleCollisionReaction(other) {    
-        this.pressedKeys = {};
-        this.updateVelocity();
-        this.updateDirection();
+        // Do not clear pressed keys; simply stop current movement
+        this.transform.xv = 0;
+        this.transform.yv = 0;
         super.handleCollisionReaction(other);
     }
 

@@ -5,6 +5,17 @@ import DialogueSystem from "../features/DialogueSystem.js";
 class Npc extends Character {
     constructor(data = null, gameEnv = null) {
         super(data, gameEnv);
+        // Ensure NPC renders above background/player unless explicitly set
+        try {
+            if (this.spriteData) {
+                const defaultZ = (typeof this.spriteData.zIndex === 'number') ? this.spriteData.zIndex : 12; // above default 10
+                this.spriteData.zIndex = defaultZ;
+            }
+        } catch (_) {}
+        // Force canvas to be visible
+        try { if (this.canvas && this.canvas.style) this.canvas.style.visibility = 'visible'; } catch (_) {}
+        // Log creation for debugging
+        try { console.log('[Npc] created', { id: this.spriteData?.id, x: this.transform?.x, y: this.transform?.y, src: this.spriteData?.src }); } catch (_) {}
         this.interact = data?.interact; // Interact function
         this.currentQuestionIndex = 0;
         this.alertTimeout = null;
@@ -20,7 +31,7 @@ class Npc extends Character {
         if (data?.dialogues) {
             this.dialogueSystem = new DialogueSystem({
                 dialogues: data.dialogues,
-                
+                gameControl: gameEnv?.gameControl,
                 id: this.uniqueId
             });
         } else {
@@ -32,6 +43,7 @@ class Npc extends Character {
                     "Nice weather we're having, isn't it?",
                     "I've been standing here for quite some time."
                 ],
+                gameControl: gameEnv?.gameControl,
                 // Pass unique ID to prevent conflicts
                 id: this.uniqueId
             });
@@ -45,6 +57,11 @@ class Npc extends Character {
 
     update() {
         this.draw();
+        // Log first draw once
+        if (!this._loggedFirstDraw) {
+            try { console.log('[Npc] first draw', { id: this.spriteData?.id, canvasPos: { left: this.canvas?.style?.left, top: this.canvas?.style?.top }, size: { w: this.canvas?.style?.width, h: this.canvas?.style?.height } }); } catch (_) {}
+            this._loggedFirstDraw = true;
+        }
         
         // Only check collision state when not paused
         if (!this.gameEnv.gameControl || !this.gameEnv.gameControl.isPaused) {
