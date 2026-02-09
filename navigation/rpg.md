@@ -132,24 +132,40 @@ function closeCustomAlert() {
         let lastErr = null;
         for (const cand of uniq) {
             try {
-                const testUrl = `${cand}/assets/js/adventureGame/GameEngine/Game.js?v=${Date.now()}`;
-                const res = await fetch(testUrl, { method: 'GET', credentials: 'same-origin', cache: 'no-store' });
-                if (res && res.ok) {
-                    const ctype = (res.headers.get('content-type') || '').toLowerCase();
-                    // Prefer JS MIME types; if ambiguous, inspect body
-                    if (ctype.includes('javascript') || ctype.includes('ecmascript') || ctype.includes('module')) {
-                        basePrefix = cand; return basePrefix;
+                // Probe multiple likely engine locations to detect a correct base
+                const probes = [
+                    `${cand}/assets/js/GameEngine/essentials/Game.js?v=${Date.now()}`,
+                    `${cand}/assets/js/mansionGame/GameEngine/Game.js?v=${Date.now()}`,
+                    `${cand}/assets/js/adventureGame/GameEngine/Game.js?v=${Date.now()}`
+                ];
+                let ok = false;
+                let lastProbeErr = null;
+                for (const testUrl of probes) {
+                    try {
+                        const res = await fetch(testUrl, { method: 'GET', credentials: 'same-origin', cache: 'no-store' });
+                        const ctype = (res.headers.get('content-type') || '').toLowerCase();
+                        const text = res.ok ? await res.text() : '';
+                        if (!res.ok) {
+                            lastProbeErr = new Error(`Probe failed: ${res?.status} @ ${testUrl}`);
+                            continue;
+                        }
+                        // Reject HTML responses (which cause "Unexpected token '<'")
+                        if (text.trim().startsWith('<')) {
+                            lastProbeErr = new Error(`Probe returned HTML @ ${testUrl}`);
+                            continue;
+                        }
+                        // Accept typical JS MIME types; if ambiguous but body isn't HTML, accept as well
+                        if (ctype.includes('javascript') || ctype.includes('ecmascript') || ctype.includes('module') || ctype === '') {
+                            basePrefix = cand; ok = true; break;
+                        } else {
+                            basePrefix = cand; ok = true; break;
+                        }
+                    } catch (probeErr) {
+                        lastProbeErr = probeErr;
                     }
-                    const text = await res.text();
-                    // Reject HTML responses (which cause "Unexpected token '<'")
-                    if (text.trim().startsWith('<')) {
-                        lastErr = new Error(`Probe returned HTML @ ${testUrl}`);
-                    } else {
-                        basePrefix = cand; return basePrefix;
-                    }
-                } else {
-                    lastErr = new Error(`Probe failed: ${res?.status} @ ${testUrl}`);
                 }
+                if (ok) return basePrefix;
+                lastErr = lastProbeErr;
             } catch (e) {
                 lastErr = e;
             }
@@ -424,26 +440,67 @@ function closeCustomAlert() {
             // Rewrite import specifiers to fully-qualified URLs
             const origin = window.location.origin;
             await ensureBasePrefix();
-            const basePrefixLocal = basePrefix;
-            const fromAbsRe = /(from\s*["'])(\/[^"']+)(["'])/g; // import ... from '/x/y'
-            const dynImpAbsRe = /(import\(\s*["'])(\/[^"']+)(["']\s*\))/g; // import('/x/y')
-            const fromRelRe = /(from\s*["'])(?!https?:)(\.?\.?[^"']+)(["'])/g; // import ... from './x' or 'x'
-            const dynImpRelRe = /(import\(\s*["'])(?!https?:)(\.?\.?[^"']+)(["']\s*\))/g; // import('./x') or import('x')
+            const basePrefixLocal = String(basePrefix || origin).replace(/\/+$/, '');
+            // Static imports: import X from '/abs', import X from './rel'
+            const fromAbsRe = /(from\s*["'])(\/[^"]+)(["'])/g; // import ... from '/x/y'
+            const fromRelRe = /(from\s*["'])(\.{1,2}\/[^"]+)(["'])/g; // import ... from './x' or '../x'
+            // Side-effect imports: import '/abs', import './rel' (no 'from')
+            const bareImpAbsRe = /(import\s*["'])(\/[^"]+)(["'])/g; // import '/x/y'
+            const bareImpRelRe = /(import\s*["'])(\.{1,2}\/[^"]+)(["'])/g; // import './x' or '../x'
+            // Dynamic imports: import('/abs'), import('./rel')
+            const dynImpAbsRe = /(import\(\s*["'])(\/[^"]+)(["']\s*\))/g; // import('/x/y')
+            const dynImpRelRe = /(import\(\s*["'])(\.{1,2}\/[^"]+)(["']\s*\))/g; // import('./x') or import('../x')
             code = code
                 // Absolute root paths
                 .replace(fromAbsRe, (m, p1, p2, p3) => `${p1}${basePrefixLocal}${p2}${p3}`)
+                .replace(bareImpAbsRe, (m, p1, p2, p3) => `${p1}${basePrefixLocal}${p2}${p3}`)
                 .replace(dynImpAbsRe, (m, p1, p2, p3) => `${p1}${basePrefixLocal}${p2}${p3}`)
                 // Relative paths -> prefix with base
                 .replace(fromRelRe, (m, p1, p2, p3) => `${p1}${basePrefixLocal}/${p2}${p3}`)
-                .replace(dynImpRelRe, (m, p1, p2, p3) => `${p1}${basePrefixLocal}/${p2}${p3}`);
+                .replace(bareImpRelRe, (m, p1, p2, p3) => `${p1}${basePrefixLocal}/${p2}${p3}`)
+                .replace(dynImpRelRe, (m, p1, p2, p3) => `${p1}${basePrefixLocal}/${p2}${p3}`)
+                // Catch-all: any quoted root-absolute path becomes fully-qualified
+                .replace(/(["'])(\/[^"']+)\1/g, (m, quote, abs) => `${quote}${basePrefixLocal}${abs}${quote}`);
 
 
             // Ensure engine is loaded before running
             const Engine = await loadEngine();
 
 
+            // Extract and prefetch import specifiers to surface failing URLs early
+            const specifiers = [];
+            try {
+                const fromList = [...code.matchAll(/from\s*["']([^"']+)["']/g)].map(m => m[1]);
+                const dynImpList = [...code.matchAll(/import\(\s*["']([^"']+)["']\s*\)/g)].map(m => m[1]);
+                const bareImpList = [...code.matchAll(/import\s*["']([^"']+)["']/g)].map(m => m[1]);
+                specifiers.push(...fromList, ...dynImpList, ...bareImpList);
+            } catch (_) {}
+            const uniqSpecs = [...new Set(specifiers)].filter(s => /^https?:\/\//.test(s));
+            for (const u of uniqSpecs) {
+                try {
+                    const r = await fetch(u, { method: 'GET', credentials: 'same-origin', cache: 'no-store' });
+                    const ct = (r.headers.get('content-type') || '').toLowerCase();
+                    const body = r.ok ? await r.text() : '';
+                    if (!r.ok || body.trim().startsWith('<') || !(ct.includes('javascript') || ct.includes('ecmascript') || ct.includes('module') || ct === '')) {
+                        throw new Error(`Import check failed for ${u} (status ${r.status || 'unknown'})`);
+                    }
+                } catch (prefErr) {
+                    const el = document.getElementById('custom-alert');
+                    const msgBtn = document.getElementById('custom-alert-message');
+                    if (el && msgBtn) {
+                        msgBtn.textContent = `Error: ${prefErr.message}`;
+                        el.style.display = 'block';
+                        disableBlockers();
+                    }
+                    return;
+                }
+            }
+
             // Create module blob and import
-            const blob = new Blob([code], { type: 'application/javascript' });
+            // Helpful source name for better error stacks in devtools
+            const sourceNamedCode = `${code}\n//# sourceURL=gamebuilder-live-code.js`;
+            // Use a widely supported MIME for module import of Blob
+            const blob = new Blob([sourceNamedCode], { type: 'application/javascript' });
             const url = URL.createObjectURL(blob);
             let mod = null;
             try {
@@ -587,6 +644,7 @@ function closeCustomAlert() {
             }
         } catch (err) {
             console.error('Live code run error:', err);
+            try { console.debug('[Runner] Code (first 1000 chars):', String(code || '').slice(0, 1000)); } catch (_) {}
             try {
                 const el = document.getElementById('custom-alert');
                 const msgBtn = document.getElementById('custom-alert-message');
@@ -645,7 +703,3 @@ function closeCustomAlert() {
         }
     });
 </script>
-
-
-
-

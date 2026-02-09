@@ -1626,6 +1626,8 @@ export const gameLevelClasses = [CustomLevel];`;
                         const hbW = Math.max(0, Math.min(parseFloat(ui.pHitboxW?.value || '0'), 0.9));
                         const hbH = Math.max(0, Math.min(parseFloat(ui.pHitboxH?.value || '0'), 0.9));
 
+                        const pXVal = parseInt(ui.pX?.value || '0', 10);
+                        const pYVal = parseInt(ui.pY?.value || '0', 10);
                         const defs = `
         const bgData = {
             name: 'custom_bg',
@@ -1638,7 +1640,7 @@ export const gameLevelClasses = [CustomLevel];`;
             SCALE_FACTOR: ${pScaleVal},
             STEP_FACTOR: ${pStepVal},
             ANIMATION_RATE: ${pAnimVal},
-            INIT_POSITION: { x: ${ui.pX.value}, y: ${ui.pY.value} },
+            INIT_POSITION: { x: ${isFinite(pXVal) ? pXVal : 0}, y: ${isFinite(pYVal) ? pYVal : 0} },
             pixels: { height: ${p.h}, width: ${p.w} },
             orientation: { rows: ${pRowsVal}, columns: ${pColsVal} },
             down: { row: ${dRow}, start: 0, columns: ${dirCols} },
@@ -1714,6 +1716,8 @@ export const gameLevelClasses = [CustomLevel];`;
                         const hbWN = Math.max(0, Math.min(parseFloat(ui.pHitboxW?.value || '0'), 0.9));
                         const hbHN = Math.max(0, Math.min(parseFloat(ui.pHitboxH?.value || '0'), 0.9));
                         
+                        const pXValN = parseInt(ui.pX?.value || '0', 10);
+                        const pYValN = parseInt(ui.pY?.value || '0', 10);
                         const defsStart = `
         const bgData = {
             name: 'custom_bg',
@@ -1726,7 +1730,7 @@ export const gameLevelClasses = [CustomLevel];`;
             SCALE_FACTOR: ${pScaleValN},
             STEP_FACTOR: ${pStepValN},
             ANIMATION_RATE: ${pAnimValN},
-            INIT_POSITION: { x: ${ui.pX.value}, y: ${ui.pY.value} },
+            INIT_POSITION: { x: ${isFinite(pXValN) ? pXValN : 0}, y: ${isFinite(pYValN) ? pYValN : 0} },
             pixels: { height: ${p.h}, width: ${p.w} },
             orientation: { rows: ${pRowsValN}, columns: ${pColsValN} },
             down: { row: 0, start: 0, columns: 3 },
@@ -1845,6 +1849,8 @@ export const gameLevelClasses = [CustomLevel];`;
                     const pRowsValW = Math.max(1, parseInt((ui.pRows?.value ?? '').trim() || '3', 10));
                     const pColsValW = Math.max(1, parseInt((ui.pCols?.value ?? '').trim() || '4', 10));
                     
+                    const pXValW = parseInt(ui.pX?.value || '0', 10);
+                    const pYValW = parseInt(ui.pY?.value || '0', 10);
                     const defsStart = `
         const bgData = {
             name: 'custom_bg',
@@ -1857,7 +1863,7 @@ export const gameLevelClasses = [CustomLevel];`;
             SCALE_FACTOR: ${pScaleValW},
             STEP_FACTOR: ${pStepValW},
             ANIMATION_RATE: ${pAnimValW},
-            INIT_POSITION: { x: ${ui.pX.value}, y: ${ui.pY.value} },
+            INIT_POSITION: { x: ${isFinite(pXValW) ? pXValW : 0}, y: ${isFinite(pYValW) ? pYValW : 0} },
             pixels: { height: ${p.h}, width: ${p.w} },
             orientation: { rows: ${pRowsValW}, columns: ${pColsValW} },
             down: { row: 0, start: 0, columns: 3 },
@@ -2681,5 +2687,3 @@ window.addEventListener('keyup', function(e) {
     forwardInteractKey(e, 'keyup');
 });
 </script>
-
-
